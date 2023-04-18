@@ -129,6 +129,7 @@ EOF
 
 # We already have <zfs_pool> pool
 linstor resource-group create images --storage-pool zfs_pool --place-count 2    # creating resource group with number of placements, more options in manual
+linstor resource-group drbd-options --verify-alg crc32c images
 linstor volume-group create images      # Creating volume group on top of resource-group, here our resources (VM drives, etc) get placed
 
 
