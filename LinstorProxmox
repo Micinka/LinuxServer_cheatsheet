@@ -48,6 +48,7 @@ linstor storage-pool create zfs pve2 zfs_pool fast/linstor
 
 
 # Configure HA storage for linstor roaming controller
+# You will need at least 2 nodes to create resource
 
 linstor resource-definition create linstor_db
 linstor resource-definition drbd-options --on-no-quorum=io-error linstor_db
