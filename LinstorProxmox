@@ -119,7 +119,7 @@ systemctl restart linstor-satellite
 
 # Now we need to tell linstor where avalible controllers could be, so we can use linstor commands on each node
 
-cat << EOF > /etc/linstor/linstor-client.con
+cat << EOF > /etc/linstor/linstor-client.conf
 [global]
 controllers=pve1,pve2,pve3
 EOF
