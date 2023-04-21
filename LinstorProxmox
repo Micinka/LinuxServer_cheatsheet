@@ -1,11 +1,26 @@
 # ProxmoxVE instal drbd9 with LINSTOR HA Controller
 
-# Install latest kernel headers and then drbd 9
 
+# First of all add licence key or add no-subscription repo and make sure it is active, the file should look like this, you can echo >> it right like is (for Proxmox 7.4.1), you need one of these repos to install pve-headers for DRBD9, Linstor needs drbd9 to work.
+
+cat << EOF > /etc/apt/sources.list2
+deb http://ftp.cz.debian.org/debian bullseye main contrib
+
+deb http://ftp.cz.debian.org/debian bullseye-updates main contrib
+
+# security updates
+deb http://security.debian.org bullseye-security main contrib
+
+deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription
+EOF
+
+
+# Install latest kernel headers and then drbd 9
 echo "deb http://packages.linbit.com/proxmox/ proxmox-7 drbd-9" > /etc/apt/sources.list.d/linbit.list
 wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -
 apt update
 apt install pve-headers -y
+
 apt install drbd-dkms drbd-utils -y
 
 # check if drbd module is loaded, just to be sure load it
@@ -17,7 +32,109 @@ apt-get -y install linstor-proxmox linstor-satellite
 systemctl start linstor-satellite
 
 
-# Prepare Linstor Controller for HA, install this on ALL nodes
+# Prepare Deb11 Container for Linstor Controller initialization, or create from GUI
+wget http://download.proxmox.com/images/system/debian-11-standard_11.0-1_amd64.tar.gz -P /var/lib/vz/template/cache/
+pct create 100 local:vztmpl/debian-11-standard_11.0-1_amd64.tar.gz \
+  --hostname=linstor-controller \
+  --net0=name=eth0,bridge=vmbr0,gw=10.1.0.1,ip=10.1.0.123/16
+  # Insert your ip all PVE nodes can reach
+
+
+# Now start the container and launch console, or you can SSH into it
+pct start 100
+pct exec 100 bash
+
+
+# IN CONTAINER
+
+apt update
+apt upgade -y
+
+
+echo "deb http://packages.linbit.com/proxmox/ proxmox-7 drbd-9" > /etc/apt/sources.list.d/linbit.list
+wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -
+apt update
+
+apt install -y linstor-controller linstor-client
+
+systemctl start linstor-controller.service
+systemctl enable linstor-controller.service
+
+# Linstor requires configured locale. Configure locale:
+
+sed -i '/en_US.UTF-8 UTF-8/ s/^# //' /etc/locale.gen
+locale-gen
+
+dpkg-reconfigure tzdata
+
+
+# Now when we have installed the controller and have linstor-satelite on all of our nodes, we create cluster (on the controller console)
+
+# Be careful to use the same name the nodes hostname, watch out for errors
+linstor node interface create pve1 data 10.2.0.11
+linstor node interface create pve2 data 10.2.0.12
+linstor node interface create pve3 data 10.2.0.13
+
+# now we should see the nodes in list command
+linstor node list
+
+╭──────────────────────────────────────────────────────────────╮
+┊ Node ┊ NodeType  ┊ Addresses                        ┊ State  ┊
+╞┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╡
+┊ pve1 ┊ SATELLITE ┊ 10.0.1.11,10.0.2.11:3366 (PLAIN) ┊ Online ┊
+┊ pve2 ┊ SATELLITE ┊ 10.0.1.12,10.0.2.12:3366 (PLAIN) ┊ Online ┊
+┊ pve3 ┊ SATELLITE ┊ 10.0.1.13,10.0.2.13:3366 (PLAIN) ┊ Online ┊
+╰──────────────────────────────────────────────────────────────╯
+
+
+
+# Creatig storage pool on all 3 nodes, for example ZFS pool with created dataset for linstor  "fast/linstor"
+# linstor storage-pool create "storage backend type" "node" "name of new pool" "stogage resource"
+linstor storage-pool create zfs pve1 zfs_pool fast/linstor
+linstor storage-pool create zfs pve2 zfs_pool fast/linstor
+linstor storage-pool create zfs pve2 zfs_pool fast/linstor
+
+# Refer to manual for more info on diferent storage backends https://linbit.com/drbd-user-guide/linstor-guide-1_0-en/#s-storage_pools
+
+
+
+# We have LINSTOR 3 node cluster with backend for replicating storage, now we need to create resource group for our VM images, etc.
+# Refer to manual for more options in creatin resource groups and definitions, here we will create example resource group with placing resources on only 2 nodes
+
+# We already have <zfs_pool> pool
+linstor resource-group create images --storage-pool zfs_pool --place-count 2    # creating resource group with number of placements, more options in manual
+linstor resource-group drbd-options --verify-alg crc32c images
+linstor volume-group create images      # Creating volume group on top of resource-group, here our resources (VM drives, etc) get placed
+
+
+# You can also exclude node from placing any resources to it, for example a tie-breaker node
+#   linstor node set-property <node_name> AutoplaceTarget false
+
+# And finaly you need to add the resource group to your /etc/pve/storage.cfg file to use the storage in GUI ( here the linstor-proxmox package does the job)
+# Add this to your config file, change accorging node names and resource group names, etc.
+drbd: linstor-images
+        content images,rootdir
+        controller pve1,pve2,pve3
+        resourcegroup images
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# High Avability SETUP
+
 # Temporarely enable controller service so we can create resources for HA controller
 
 apt-get update && apt install -y linstor-controller linstor-client
@@ -29,22 +146,6 @@ systemctl stop linstor-controller.service
 
 # Chose one node from which we will start and configure the Linstor Cluster
 systemctl start linstor-controller.service
-
-#From here on we add nodes
-linstor node create pve1 10.1.0.11
-linstor node create pve2 10.1.0.12
-linstor node create pve3 10.1.0.13
-
-# Creatig storage pool on all 3 nodes, for example ZFS pool with created dataset for linstor  "fast/linstor"
-
-# linstor storage-pool create "storage backend type" "node" "name of new pool" "stogage resource"
-linstor storage-pool create zfs pve1 zfs_pool fast/linstor
-# Repeat on all nodes to have same linstor storage pool on all nodes
-linstor storage-pool create zfs pve2 zfs_pool fast/linstor
-linstor storage-pool create zfs pve2 zfs_pool fast/linstor
-
-
-# Refer to manual for more info on diferent storage backends https://linbit.com/drbd-user-guide/linstor-guide-1_0-en/#s-storage_pools
 
 
 # Configure HA storage for linstor roaming controller
@@ -124,22 +225,3 @@ cat << EOF > /etc/linstor/linstor-client.conf
 controllers=pve1,pve2,pve3
 EOF
 
-
-# We have HA LINSTOR controller and 3 node cluster with backend for replicating storage, now we need to create resource group for our VM images, etc.
-# Refer to manual for more options in creatin resource groups and definitions, here we will create example resource group with placing resources on only 2 nodes
-
-# We already have <zfs_pool> pool
-linstor resource-group create images --storage-pool zfs_pool --place-count 2    # creating resource group with number of placements, more options in manual
-linstor resource-group drbd-options --verify-alg crc32c images
-linstor volume-group create images      # Creating volume group on top of resource-group, here our resources (VM drives, etc) get placed
-
-
-# You can also exclude node from placing any resources to it, for example a tie-breaker node
-#   linstor node set-property <node_name> AutoplaceTarget false
-
-# And finaly you need to add the resource group to your /etc/pve/storage.cfg file to use the storage in GUI ( here the linstor-proxmox package does the job)
-# Add this to your config file, change accorging node names and resource group names, etc.
-drbd: linstor-images
-        content images,rootdir
-        controller pve1,pve2,pve3
-        resourcegroup images
