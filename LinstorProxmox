@@ -140,6 +140,6 @@ linstor volume-group create images      # Creating volume group on top of resour
 # And finaly you need to add the resource group to your /etc/pve/storage.cfg file to use the storage in GUI ( here the linstor-proxmox package does the job)
 # Add this to your config file, change accorging node names and resource group names, etc.
 drbd: linstor-images
-<------>content images,rootdir
-<------>controller pve1,pve2,pve3
-<------>resourcegroup images
+        content images,rootdir
+        controller pve1,pve2,pve3
+        resourcegroup images
