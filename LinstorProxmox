@@ -16,11 +16,12 @@ EOF
 
 
 # Install latest kernel headers and then drbd 9
+
+apt install pve-headers -y
+
 echo "deb http://packages.linbit.com/proxmox/ proxmox-7 drbd-9" > /etc/apt/sources.list.d/linbit.list
 wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -
 apt update
-apt install pve-headers -y
-
 apt install drbd-dkms drbd-utils -y
 
 # check if drbd module is loaded, just to be sure load it
@@ -28,7 +29,7 @@ rmmod drbd; modprobe drbd
 grep -q drbd /etc/modules || echo "drbd" >> /etc/modules
 
 
-apt-get -y install linstor-proxmox linstor-satellite
+apt-get -y install linstor-proxmox linstor-satellite linstor-client
 systemctl start linstor-satellite
 
 
@@ -46,6 +47,7 @@ pct exec 100 bash
 
 
 # IN CONTAINER
+apt install gnupg gnupg2
 
 apt update
 apt upgade -y
@@ -219,7 +221,7 @@ systemctl restart linstor-satellite
 
 
 # Now we need to tell linstor where avalible controllers could be, so we can use linstor commands on each node
-
+mkdir /etc/linstor
 cat << EOF > /etc/linstor/linstor-client.conf
 [global]
 controllers=pve1,pve2,pve3
