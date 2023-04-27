@@ -1,9 +1,12 @@
 # ProxmoxVE instal drbd9 with LINSTOR HA Controller
+# Current version of of ProxmxoVE is 7.4.1 during making of this tutorial
+# Tutorial is based on 3 node setup, but can be done with only Controller + 1 node
 
 
-# First of all add licence key or add no-subscription repo and make sure it is active, the file should look like this, you can echo >> it right like is (for Proxmox 7.4.1), you need one of these repos to install pve-headers for DRBD9, Linstor needs drbd9 to work.
+# First of all add licence key or add no-subscription repo and make sure it is active, if you dont have Licence Key, the file should look like this
+# You can echo > it right like is (for Proxmox 7.x.x - Debian bullseye), you need one of these repos to install pve-headers for DRBD9, Linstor needs drbd9 to work.
 
-cat << EOF > /etc/apt/sources.list2
+cat << EOF > /etc/apt/sources.list
 deb http://ftp.cz.debian.org/debian bullseye main contrib
 
 deb http://ftp.cz.debian.org/debian bullseye-updates main contrib
@@ -15,30 +18,35 @@ deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription
 EOF
 
 
-# Install latest kernel headers and then drbd 9
-
+# Install latest kernel headers and then drbd 9. You should restart after this.
 apt install pve-headers -y
 
+
+# Now we add linbit repository to our sources
 echo "deb http://packages.linbit.com/proxmox/ proxmox-7 drbd-9" > /etc/apt/sources.list.d/linbit.list
-wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -
+wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -       # if by any chance you get error here, install "gnupg gnupg2"
 apt update
 apt install drbd-dkms drbd-utils -y
 
-# check if drbd module is loaded, just to be sure load it
-rmmod drbd; modprobe drbd
-grep -q drbd /etc/modules || echo "drbd" >> /etc/modules
+
+# Modprobe drbd module and check loaded vesrion
+modprobe drbd
+cat /proc/drbd
+
+# You should get version 9.x.x, my verision during making this tutorial was 9.2.3
+
 
 
 apt-get -y install linstor-proxmox linstor-satellite linstor-client
 systemctl start linstor-satellite
 
 
-# Prepare Deb11 Container for Linstor Controller initialization, or create from GUI
+# Prepare Debian 11 Container for Linstor Controller initialization, or create from GUI
 wget http://download.proxmox.com/images/system/debian-11-standard_11.0-1_amd64.tar.gz -P /var/lib/vz/template/cache/
 pct create 100 local:vztmpl/debian-11-standard_11.0-1_amd64.tar.gz \
   --hostname=linstor-controller \
-  --net0=name=eth0,bridge=vmbr0,gw=10.1.0.1,ip=10.1.0.123/16
-  # Insert your ip all PVE nodes can reach
+  --net0=name=eth0,bridge=vmbr0,gw=192.168.0.1,ip=192.168.0.123/24
+  # Insert yourl local ip, that all PVE nodes can reach
 
 
 # Now start the container and launch console, or you can SSH into it
@@ -47,12 +55,10 @@ pct exec 100 bash
 
 
 # IN CONTAINER
-apt install gnupg gnupg2
-
-apt update
-apt upgade -y
+apt update && apt upgade -y && apt install gnupg gnupg2 -y
 
 
+# Now we add linbit repository to our sources
 echo "deb http://packages.linbit.com/proxmox/ proxmox-7 drbd-9" > /etc/apt/sources.list.d/linbit.list
 wget -O- https://packages.linbit.com/package-signing-pubkey.asc | apt-key add -
 apt update
@@ -70,23 +76,26 @@ locale-gen
 dpkg-reconfigure tzdata
 
 
-# Now when we have installed the controller and have linstor-satelite on all of our nodes, we create cluster (on the controller console)
+# Now when we have installed the controller and have linstor-satelite on all of our nodes, we can create a cluster (on the controller console)
 
 # Be careful to use the same name the nodes hostname, watch out for errors
-linstor node interface create pve1 data 10.2.0.11
-linstor node interface create pve2 data 10.2.0.12
-linstor node interface create pve3 data 10.2.0.13
+# the syntax is:    linstor node create <node-hostname> <node-ip-address>
+linstor node create linstor-controller 192.168.0.123 --node-type controller
+linstor node create pve1 192.168.0.10
+linstor node create pve2 192.168.0.20
+linstor node create pve3 192.168.0.30
 
 # now we should see the nodes in list command
 linstor node list
 
-╭──────────────────────────────────────────────────────────────╮
-┊ Node ┊ NodeType  ┊ Addresses                        ┊ State  ┊
-╞┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╡
-┊ pve1 ┊ SATELLITE ┊ 10.0.1.11,10.0.2.11:3366 (PLAIN) ┊ Online ┊
-┊ pve2 ┊ SATELLITE ┊ 10.0.1.12,10.0.2.12:3366 (PLAIN) ┊ Online ┊
-┊ pve3 ┊ SATELLITE ┊ 10.0.1.13,10.0.2.13:3366 (PLAIN) ┊ Online ┊
-╰──────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────╮
+┊ Node               ┊ NodeType   ┊ Addresses                 ┊ State  ┊
+╞┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╡
+┊ linstor-controller ┊ CONTROLLER ┊ 192.168.0.10:3370 (PLAIN) ┊ Online ┊
+┊ pve1               ┊ SATELLITE  ┊ 192.168.0.10:3366 (PLAIN) ┊ Online ┊
+┊ pve2               ┊ SATELLITE  ┊ 192.168.0.20:3366 (PLAIN) ┊ Online ┊
+┊ pve3               ┊ SATELLITE  ┊ 192.168.0.30:3366 (PLAIN) ┊ Online ┊
+╰──────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -104,9 +113,9 @@ linstor storage-pool create zfs pve2 zfs_pool fast/linstor
 # Refer to manual for more options in creatin resource groups and definitions, here we will create example resource group with placing resources on only 2 nodes
 
 # We already have <zfs_pool> pool
-linstor resource-group create images --storage-pool zfs_pool --place-count 2    # creating resource group with number of placements, more options in manual
+linstor resource-group create images --storage-pool zfs_pool --place-count 2    # creating resource group with number of placements, if you have only 1 node setup use "1"
 linstor resource-group drbd-options --verify-alg crc32c images
-linstor volume-group create images      # Creating volume group on top of resource-group, here our resources (VM drives, etc) get placed
+linstor volume-group create drbdzfs      # Creating volume group on top of resource-group, here our resources (VM drives, etc) get placed
 
 
 # You can also exclude node from placing any resources to it, for example a tie-breaker node
@@ -114,12 +123,12 @@ linstor volume-group create images      # Creating volume group on top of resour
 
 # And finaly you need to add the resource group to your /etc/pve/storage.cfg file to use the storage in GUI ( here the linstor-proxmox package does the job)
 # Add this to your config file, change accorging node names and resource group names, etc.
-drbd: linstor-images
+drbd: drbdzfs
         content images,rootdir
         controller pve1,pve2,pve3
-        resourcegroup images
+        resourcegroup drbdzfs
 
-
+# Be carefull to use right spacing and characters, proxmox configs are sensitive...
 
 
 
